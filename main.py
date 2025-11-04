@@ -4,6 +4,16 @@ import re
 import plotly.express as px
 from base64 import b64decode
 import os
+import psycopg
+import subprocess
+import tempfile
+from typing import Optional
+import getpass
+import time
+import socket
+import uuid
+from contextlib import contextmanager
+from io import StringIO
 
 
 def decode_url(url: str) -> str:
@@ -38,6 +48,241 @@ def read_logs(url: str) -> pd.DataFrame:
         records.append(record)
     return pd.DataFrame(records)
 
+
+# Default password for local PostgreSQL (only used locally)
+# Update this to match your local PostgreSQL password
+DEFAULT_DB_PASSWORD = "password"
+
+# Default password for temporary Docker PostgreSQL container
+DOCKER_DB_PASSWORD = "postgres"
+
+
+@contextmanager
+def temp_postgres_container(
+    password: str = DOCKER_DB_PASSWORD,
+    port: Optional[int] = None,
+    image: str = "postgres:15-alpine"
+):
+    """
+    Context manager that starts a temporary PostgreSQL Docker container
+    and cleans it up when done.
+    
+    Args:
+        password: PostgreSQL password (default: DOCKER_DB_PASSWORD)
+        port: Host port to bind to (default: random available port)
+        image: Docker image to use (default: postgres:15-alpine)
+        
+    Yields:
+        dict with keys: host, port, user, password, container_id
+        
+    Example:
+        with temp_postgres_container() as db_config:
+            # Use db_config['host'], db_config['port'], etc.
+            pass
+    """
+    # Find an available port if not specified
+    if port is None:
+        sock = socket.socket()
+        sock.bind(('', 0))
+        port = sock.getsockname()[1]
+        sock.close()
+    
+    container_name = f"uptime_postgres_{uuid.uuid4().hex[:8]}"
+    container_id = None
+    
+    try:
+        # Check if Docker is available
+        result = subprocess.run(
+            ["docker", "--version"],
+            capture_output=True,
+            text=True
+        )
+        if result.returncode != 0:
+            raise RuntimeError("Docker is not available. Please install Docker and ensure it's running.")
+        
+        # Start PostgreSQL container
+        print(f"Starting PostgreSQL container '{container_name}' on port {port}...")
+        cmd = [
+            "docker", "run",
+            "-d",  # Detached mode
+            "--name", container_name,
+            "-e", f"POSTGRES_PASSWORD={password}",
+            "-e", "POSTGRES_USER=postgres",
+            "-p", f"{port}:5432",
+            image
+        ]
+        
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True
+        )
+        
+        if result.returncode != 0:
+            raise RuntimeError(f"Failed to start container: {result.stderr}")
+        
+        container_id = result.stdout.strip()
+        print(f"Container started: {container_id[:12]}")
+        
+        # Wait for PostgreSQL to be ready
+        print("Waiting for PostgreSQL to be ready...")
+        max_retries = 30
+        retry_count = 0
+        
+        while retry_count < max_retries:
+            try:
+                with psycopg.connect(
+                    host="localhost",
+                    port=port,
+                    user="postgres",
+                    password=password,
+                    connect_timeout=2
+                ) as conn:
+                    conn.execute("SELECT 1")
+                    print("PostgreSQL is ready!")
+                    break
+            except (psycopg.OperationalError, psycopg.InterfaceError):
+                retry_count += 1
+                if retry_count >= max_retries:
+                    raise RuntimeError("PostgreSQL container failed to become ready")
+                time.sleep(1)
+        
+        # Yield connection info
+        yield {
+            "host": "localhost",
+            "port": port,
+            "user": "postgres",
+            "password": password,
+            "container_id": container_id,
+            "container_name": container_name
+        }
+    
+    finally:
+        # Cleanup: stop and remove container
+        if container_name:
+            print(f"Stopping and removing container '{container_name}'...")
+            try:
+                # Stop container
+                subprocess.run(
+                    ["docker", "stop", container_name],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+                # Remove container
+                subprocess.run(
+                    ["docker", "rm", container_name],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+                print("Container cleaned up successfully")
+            except Exception as e:
+                print(f"Warning: Failed to clean up container: {e}")
+
+
+def query_uptime_logs_with_temp_container(
+    backup_url: str = "http://34.55.225.231:3000/backup",
+    query: str = "SELECT count(*) FROM uptime_logs",
+    **kwargs
+) -> pd.DataFrame:
+    """
+    Query uptime logs from backup using a temporary PostgreSQL Docker container.
+    
+    This function automatically starts a temporary PostgreSQL container, runs
+    query_uptime_logs_from_backup, and cleans up the container when done.
+    
+    Args:
+        backup_url: URL to fetch the PostgreSQL dump from
+        query: SQL query to execute on uptime_logs table
+        **kwargs: Additional arguments passed to temp_postgres_container
+        
+    Returns:
+        pandas DataFrame with query results
+    """
+    with temp_postgres_container(**kwargs) as db_config:
+        return query_uptime_logs_from_backup(
+            backup_url=backup_url,
+            db_host=db_config["host"],
+            db_port=db_config["port"],
+            db_user=db_config["user"],
+            db_password=db_config["password"],
+            container_name=db_config["container_name"],
+            query=query
+        )
+
+def query_uptime_logs_from_backup(
+    backup_url: str = "http://34.55.225.231:3000/backup",
+    db_host: str = "localhost",
+    db_port: int = 5432,
+    db_user: Optional[str] = None,
+    db_password: Optional[str] = None,
+    temp_db_name: Optional[str] = None,
+    container_name: Optional[str] = None,
+    query: str = "SELECT * FROM uptime_logs ORDER BY iso_timestamp"
+) -> pd.DataFrame:
+    """
+    Fetch PostgreSQL dump from URL, restore it to a temporary database,
+    and query the uptime_logs table.
+    
+    Args:
+        backup_url: URL to fetch the PostgreSQL dump from
+        db_host: PostgreSQL host (default: localhost)
+        db_port: PostgreSQL port (default: 5432)
+        db_user: PostgreSQL user (default: postgres)
+        db_password: PostgreSQL password (optional, defaults to DEFAULT_DB_PASSWORD for local use)
+        temp_db_name: Temporary database name (auto-generated if None)
+        container_name: Docker container name (if using temp_postgres_container)
+        query: SQL query to execute on uptime_logs table
+        
+    Returns:
+        pandas DataFrame with query results
+    """
+    db_user = db_user or "postgres"
+    db_password = db_password or DEFAULT_DB_PASSWORD
+    temp_db_name = temp_db_name or f"uptime_temp_{uuid.uuid4().hex[:8]}"
+    
+    backup_content = requests.get(backup_url).content
+    
+    with psycopg.connect(
+        host=db_host,
+        port=db_port,
+        user=db_user,
+        password=db_password,
+        dbname="postgres"
+    ) as conn:
+        conn.autocommit = True
+        conn.execute(f"CREATE DATABASE {temp_db_name}")
+    
+    subprocess.run(
+        ["docker", "exec", "-i", container_name, "psql", "-U", db_user, "-d", temp_db_name],
+        input=backup_content,
+        capture_output=True,
+        check=True
+    )
+    
+    with psycopg.connect(
+        host=db_host,
+        port=db_port,
+        user=db_user,
+        password=db_password,
+        dbname=temp_db_name
+    ) as conn:
+        df = pd.read_sql_query(query, conn)
+    
+    with psycopg.connect(
+        host=db_host,
+        port=db_port,
+        user=db_user,
+        password=db_password,
+        dbname="postgres"
+    ) as conn:
+        conn.autocommit = True
+        conn.execute(f"DROP DATABASE {temp_db_name}")
+    
+    return df
+
+ 
 
 def main():
     logs_url = decode_url("WVVoU01HTkViM1pNZWswd1RHcFZNVXhxU1hsT1V6UjVUWHBGTmsxNlFYZE5Remx6WWpKa2VrTm5QVDBLCg==")
@@ -77,4 +322,22 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    
+    # Check if we should use temp container
+    if len(sys.argv) > 1 and sys.argv[1] == "query-with-container":
+        # Use temporary Docker container
+        df = query_uptime_logs_with_temp_container()
+        print(f"\nQuery completed successfully!")
+        print(f"Retrieved {len(df)} rows")
+        print(f"\nFirst few rows:")
+        print(df.head())
+    elif len(sys.argv) > 1 and sys.argv[1] == "main":
+        main()
+    else:
+        # Default: use temporary Docker container
+        df = query_uptime_logs_with_temp_container()
+        print(f"\nQuery completed successfully!")
+        print(f"Retrieved {len(df)} rows")
+        print(f"\nFirst few rows:")
+        print(df.head())
