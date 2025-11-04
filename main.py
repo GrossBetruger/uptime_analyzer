@@ -6,16 +6,14 @@ from base64 import b64decode
 import os
 import psycopg
 import subprocess
-import tempfile
 from typing import Optional
-import getpass
 import time
 import socket
 import uuid
 from contextlib import contextmanager
-from io import StringIO
 from datetime import datetime
 from pathlib import Path
+import typer
 
 
 def decode_url(url: str) -> str:
@@ -294,24 +292,91 @@ def query_uptime_logs_from_backup(
 
  
 
-def main():
-    logs_url = decode_url("WVVoU01HTkViM1pNZWswd1RHcFZNVXhxU1hsT1V6UjVUWHBGTmsxNlFYZE5Remx6WWpKa2VrTm5QVDBLCg==")
-    logs_remote = read_logs("http://34.55.225.231:3000/logs")
-    # logs_local = read_logs("backup-2025-11-04-15:43.txt")
-    # logs = pd.concat([logs_remote, logs_local])
-    logs = logs_remote
+app = typer.Typer(help="Uptime Analyzer - Analyze uptime logs and generate backups")
+
+
+@app.command()
+def backup(
+    backup_url: str = typer.Option(
+        "http://34.55.225.231:3000/backup",
+        "--backup-url",
+        "-u",
+        help="URL to fetch the PostgreSQL dump from"
+    ),
+    query: str = typer.Option(
+        "SELECT * FROM uptime_logs ORDER BY iso_timestamp",
+        "--query",
+        "-q",
+        help="SQL query to execute on uptime_logs table"
+    ),
+    port: Optional[int] = typer.Option(
+        None,
+        "--port",
+        "-p",
+        help="Host port to bind to (default: random available port)"
+    ),
+    output_dir: str = typer.Option(
+        "backups",
+        "--output-dir",
+        "-o",
+        help="Directory to save CSV backup"
+    )
+):
+    """
+    Backup uptime logs from a PostgreSQL database dump.
+    
+    This command fetches a PostgreSQL dump from the specified URL, restores it
+    to a temporary Docker container, queries the data, and saves it as a CSV file.
+    """
+    df = query_uptime_logs_with_temp_container(
+        backup_url=backup_url,
+        query=query,
+        port=port
+    )
+    
+    Path.mkdir(Path(output_dir), exist_ok=True)
+    csv_backup_path = Path(output_dir) / f"backup_{datetime.now().strftime('%Y-%m-%d-%H:%M:%S')}.csv"
+    df.to_csv(csv_backup_path, index=False)
+    print(f"CSV backup saved to {csv_backup_path}") 
+    print(f"\nQuery completed successfully!")
+    print(f"Retrieved {len(df)} rows")
+    print(f"\nFirst few rows:")
+    print(df.head())
+
+
+@app.command()
+def plots(
+    logs_url: str = typer.Option(
+        "http://34.55.225.231:3000/logs",
+        "--logs-url",
+        "-u",
+        help="URL or path to the logs file"
+    )
+):
+    """
+    Generate plots from uptime logs.
+    
+    This command reads logs from the specified URL or file and generates
+    visualization plots showing uptime status, disconnects, and offline durations.
+    """
+    logs = read_logs(logs_url)
     logs.sort_values(by="readable_timestamp", inplace=True)
+    
+    # Overall status plot
     fig = px.scatter(logs, x="readable_timestamp", y="status", color="user")
     fig.show()
 
+    # Per-user plots
     for user in logs["user"].unique():
-        user_logs = logs[logs["user"] == user]
+        user_logs = logs[logs["user"] == user].copy()
         user_logs["is_offline"] = user_logs["status"] == "offline"
         user_logs["accumulated-disconnects"] = user_logs["is_offline"].cumsum(skipna=True)
+        
+        # Accumulated disconnects plot
         fig = px.scatter(user_logs, x="readable_timestamp", y="accumulated-disconnects", color="user")
         fig.show()
 
-        # s: a pandas Series with a DatetimeIndex
+        # Offline duration distribution
         value = "offline"
         cond = user_logs["status"].eq(value).fillna(False)
 
@@ -320,7 +385,6 @@ def main():
 
         # length of the current True-streak at each time (0 when not value)
         running_streak = cond.groupby(grp).cumsum().astype(int)
-        # print(json.dumps(running_streak.to_list(), indent=4))
         counts = running_streak.value_counts().drop(0)
         if counts.empty:
             continue
@@ -332,15 +396,5 @@ def main():
 
 
 if __name__ == "__main__":
-    import sys
-    # Check if we should use temp container
-        # Use temporary Docker container
-    df = query_uptime_logs_with_temp_container()
-    csv_backup_path = Path("backups") / f"backup_{datetime.now().strftime('%Y-%m-%d-%H:%M:%S')}.csv"
-    df.to_csv(csv_backup_path, index=False)
-    print(f"CSV backup saved to {csv_backup_path}") 
-    print(f"\nQuery completed successfully!")
-    print(f"Retrieved {len(df)} rows")
-    print(f"\nFirst few rows:")
-    print(df.head())
+    app()
   
