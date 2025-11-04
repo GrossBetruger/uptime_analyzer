@@ -42,9 +42,9 @@ def read_logs(url: str) -> pd.DataFrame:
 def main():
     logs_url = decode_url("WVVoU01HTkViM1pNZWswd1RHcFZNVXhxU1hsT1V6UjVUWHBGTmsxNlFYZE5Remx6WWpKa2VrTm5QVDBLCg==")
     logs_remote = read_logs("http://34.55.225.231:3000/logs")
-    logs_local = read_logs("backup-2025-11-04-15:43.txt")
-
-    logs = pd.concat([logs_remote, logs_local])
+    # logs_local = read_logs("backup-2025-11-04-15:43.txt")
+    # logs = pd.concat([logs_remote, logs_local])
+    logs = logs_remote
     logs.sort_values(by="readable_timestamp", inplace=True)
     fig = px.scatter(logs, x="readable_timestamp", y="status", color="user")
     fig.show()
