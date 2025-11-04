@@ -3,6 +3,8 @@ import requests
 import re
 import plotly.express as px
 from base64 import b64decode
+import os
+
 
 def decode_url(url: str) -> str:
     for _ in range(3): 
@@ -13,9 +15,13 @@ def read_logs(url: str) -> pd.DataFrame:
     """
     Read logs from a URL and return a pandas DataFrame.
     """
-    response = requests.get(url)
+    if os.path.exists(url):
+        text = open(url).read()
+    else:
+        text = requests.get(url).text
+    # response = requests.get(url)
     records = []
-    for line in response.text.split("\n"):
+    for line in text.split("\n"):
         if not line:
             continue
         timestamp = line.split(" ")[0]
@@ -35,7 +41,10 @@ def read_logs(url: str) -> pd.DataFrame:
 
 def main():
     logs_url = decode_url("WVVoU01HTkViM1pNZWswd1RHcFZNVXhxU1hsT1V6UjVUWHBGTmsxNlFYZE5Remx6WWpKa2VrTm5QVDBLCg==")
-    logs = read_logs("http://34.55.225.231:3000/logs")
+    logs_remote = read_logs("http://34.55.225.231:3000/logs")
+    logs_local = read_logs("backup-2025-11-04-15:43.txt")
+
+    logs = pd.concat([logs_remote, logs_local])
     logs.sort_values(by="readable_timestamp", inplace=True)
     fig = px.scatter(logs, x="readable_timestamp", y="status", color="user")
     fig.show()
