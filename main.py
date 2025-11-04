@@ -14,6 +14,8 @@ import socket
 import uuid
 from contextlib import contextmanager
 from io import StringIO
+from datetime import datetime
+from pathlib import Path
 
 
 def decode_url(url: str) -> str:
@@ -183,7 +185,7 @@ def temp_postgres_container(
 
 def query_uptime_logs_with_temp_container(
     backup_url: str = "http://34.55.225.231:3000/backup",
-    query: str = "SELECT count(*) FROM uptime_logs",
+    query: str = "SELECT * FROM uptime_logs",
     **kwargs
 ) -> pd.DataFrame:
     """
@@ -242,8 +244,16 @@ def query_uptime_logs_from_backup(
     db_password = db_password or DEFAULT_DB_PASSWORD
     temp_db_name = temp_db_name or f"uptime_temp_{uuid.uuid4().hex[:8]}"
     
-    backup_content = requests.get(backup_url).content
-    
+    backup_response = requests.get(backup_url)
+    backup_content = backup_response.content
+    backup_text = backup_response.text
+
+    Path.mkdir(Path("backups"), exist_ok=True)
+    backup_path = Path("backups") / f"backup_{datetime.now().strftime('%Y-%m-%d-%H:%M:%S')}.sql"
+    with open(backup_path, "w") as f:
+        f.write(backup_text)
+    print(f"Backup saved to {backup_path}")
+
     with psycopg.connect(
         host=db_host,
         port=db_port,
@@ -323,21 +333,14 @@ def main():
 
 if __name__ == "__main__":
     import sys
-    
     # Check if we should use temp container
-    if len(sys.argv) > 1 and sys.argv[1] == "query-with-container":
         # Use temporary Docker container
-        df = query_uptime_logs_with_temp_container()
-        print(f"\nQuery completed successfully!")
-        print(f"Retrieved {len(df)} rows")
-        print(f"\nFirst few rows:")
-        print(df.head())
-    elif len(sys.argv) > 1 and sys.argv[1] == "main":
-        main()
-    else:
-        # Default: use temporary Docker container
-        df = query_uptime_logs_with_temp_container()
-        print(f"\nQuery completed successfully!")
-        print(f"Retrieved {len(df)} rows")
-        print(f"\nFirst few rows:")
-        print(df.head())
+    df = query_uptime_logs_with_temp_container()
+    csv_backup_path = Path("backups") / f"backup_{datetime.now().strftime('%Y-%m-%d-%H:%M:%S')}.csv"
+    df.to_csv(csv_backup_path, index=False)
+    print(f"CSV backup saved to {csv_backup_path}") 
+    print(f"\nQuery completed successfully!")
+    print(f"Retrieved {len(df)} rows")
+    print(f"\nFirst few rows:")
+    print(df.head())
+  
