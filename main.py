@@ -391,7 +391,7 @@ def plots(
         fig = px.bar(counts, x=counts.index, y=counts.values)
         x_label = "זמן ניתוק בשניות"
         y_label = "מספר ניתוקים"
-        fig.update_layout(xaxis_title=x_label, yaxis_title=y_label)
+        fig.update_layout(xaxis_title=x_label, yaxis_title=y_label, title=f"{user} :ניתוקים של")
         fig.show()
 
 
