@@ -361,7 +361,8 @@ def plots(
     """
     logs = read_logs(logs_url)
     logs.sort_values(by="readable_timestamp", inplace=True)
-    
+    test_users = ["OrenK", "Drier"]    
+    logs = logs[~logs["user"].isin(test_users)]
     # Overall status plot
     fig = px.scatter(logs, x="readable_timestamp", y="status", color="user")
     fig.show()
