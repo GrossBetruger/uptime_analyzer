@@ -14,6 +14,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 import typer
+from copy import deepcopy
 
 
 def decode_url(url: str) -> str:
@@ -32,7 +33,8 @@ def read_logs(url: str) -> pd.DataFrame:
     # response = requests.get(url)
     records = []
     for line in text.split("\n"):
-        if not line:
+        original = deepcopy(line)
+        if not line or line == " ":
             continue
         timestamp = line.split(" ")[0]
         msg = line[len(timestamp) + 1:]
