@@ -249,7 +249,7 @@ def query_uptime_logs_from_backup(
     backup_text = backup_response.text
 
     Path.mkdir(Path("backups"), exist_ok=True)
-    backup_path = Path("backups") / f"backup_{datetime.now().strftime('%Y-%m-%d-%H:%M:%S')}.sql"
+    backup_path = Path("backups") / f"backup_{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}.sql"
     with open(backup_path, "w") as f:
         f.write(backup_text)
     print(f"Backup saved to {backup_path}")
@@ -337,7 +337,7 @@ def backup(
     )
     
     Path.mkdir(Path(output_dir), exist_ok=True)
-    csv_backup_path = Path(output_dir) / f"backup_{datetime.now().strftime('%Y-%m-%d-%H:%M:%S')}.csv"
+    csv_backup_path = Path(output_dir) / f"backup_{datetime.now().strftime('%Y-%m-%d-%H-%M-%S')}.csv"
     df.to_csv(csv_backup_path, index=False)
     print(f"CSV backup saved to {csv_backup_path}") 
     print(f"\nQuery completed successfully!")
