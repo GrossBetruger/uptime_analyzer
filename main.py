@@ -342,8 +342,8 @@ def backup(
     print(f"CSV backup saved to {csv_backup_path}") 
     print(f"\nQuery completed successfully!")
     print(f"Retrieved {len(df)} rows")
-    print(f"\nFirst few rows:")
-    print(df.head())
+    print(f"\nLast few rows:")
+    print(df.tail())
 
 
 @app.command()
