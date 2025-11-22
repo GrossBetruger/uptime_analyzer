@@ -15,7 +15,7 @@ from datetime import datetime
 from pathlib import Path
 import typer
 from copy import deepcopy
-
+from IPython import embed
 
 def decode_url(url: str) -> str:
     for _ in range(3): 
@@ -363,7 +363,8 @@ def plots(
     """
     logs = read_logs(logs_url)
     logs.sort_values(by="readable_timestamp", inplace=True)
-    test_users = ["OrenK", "Drier"]    
+    test_users = ["OrenK", "Drier", "2025-11-18T17:28:23+02:00"]
+    # embed()
     logs = logs[~logs["user"].isin(test_users)]
     # Overall status plot
     fig = px.scatter(logs, x="readable_timestamp", y="status", color="user")
