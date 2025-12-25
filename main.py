@@ -58,6 +58,12 @@ DEFAULT_DB_PASSWORD = "password"
 # Default password for temporary Docker PostgreSQL container
 DOCKER_DB_PASSWORD = "postgres"
 
+def enrich_logs(logs: pd.DataFrame) -> pd.DataFrame:
+    """
+    Enrich logs with daily statistics.
+    """
+    logs["date"] = pd.to_datetime(logs["readable_timestamp"], errors="coerce", utc=True).dt.date
+    return logs
 
 @contextmanager
 def temp_postgres_container(
@@ -345,6 +351,13 @@ def backup(
     print(f"\nLast few rows:")
     print(df.tail())
 
+def user_daily_stats(logs: pd.DataFrame, user: str) -> pd.DataFrame:
+    """
+    Calculate daily statistics for a given user.
+    """
+    logs = logs[logs["user"] == user]
+    return logs.groupby("date").describe()
+
 
 @app.command()
 def plots(
@@ -362,6 +375,7 @@ def plots(
     visualization plots showing uptime status, disconnects, and offline durations.
     """
     logs = read_logs(logs_url)
+    logs = enrich_logs(logs)
     logs.sort_values(by="readable_timestamp", inplace=True)
     test_users = ["OrenK", "Drier", "2025-11-18T17:28:23+02:00"]
     # embed()
@@ -372,6 +386,7 @@ def plots(
 
     # Per-user plots
     for user in logs["user"].unique():
+        user_stats = user_daily_stats(logs, user)
         user_logs = logs[logs["user"] == user].copy()
         user_logs["is_offline"] = user_logs["status"] == "offline"
         user_logs["accumulated-disconnects"] = user_logs["is_offline"].cumsum(skipna=True)
