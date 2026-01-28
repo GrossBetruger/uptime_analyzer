@@ -441,11 +441,30 @@ def calculate_stats(df: pd.DataFrame) -> dict:
     """Calculate offline/online statistics for a dataframe."""
     total = len(df)
     if total == 0:
-        return {"total": 0, "offline": 0, "offline_pct": 0.0, "online_pct": 0.0}
+        return {"total": 0, "offline": 0, "offline_pct": 0.0, "online_pct": 0.0, 
+                "normalized_offline_pct": 0.0, "normalized_online_pct": 0.0}
     offline = (df["status"] == "offline").sum()
     offline_pct = (offline / total) * 100
     online_pct = 100 - offline_pct
-    return {"total": total, "offline": offline, "offline_pct": offline_pct, "online_pct": online_pct}
+    
+    # Normalized: calculate per-user offline percentage, then average across users
+    # This gives each user equal weight regardless of row count
+    user_stats = df.groupby("user").agg(
+        user_total=("status", "count"),
+        user_offline=("status", lambda x: (x == "offline").sum())
+    )
+    user_stats["user_offline_pct"] = (user_stats["user_offline"] / user_stats["user_total"]) * 100
+    normalized_offline_pct = user_stats["user_offline_pct"].mean()
+    normalized_online_pct = 100 - normalized_offline_pct
+    
+    return {
+        "total": total, 
+        "offline": offline, 
+        "offline_pct": offline_pct, 
+        "online_pct": online_pct,
+        "normalized_offline_pct": normalized_offline_pct,
+        "normalized_online_pct": normalized_online_pct
+    }
 
 
 @app.command()
@@ -463,7 +482,7 @@ def monthly_stats(
         help="Exclude test users (OrenK, Drier)"
     ),
     rush_start: int = typer.Option(
-        19,
+        20,
         "--rush-start",
         help="Rush hour start time (24h format, default: 20)"
     ),
@@ -511,17 +530,21 @@ def monthly_stats(
         
         print(f"\n{month}:")
         print(f"  ALL DAY:")
-        print(f"    Total rows:        {all_stats['total']:,}")
-        print(f"    Unique users:      {month_logs['user'].nunique()}")
-        print(f"    Offline:           {all_stats['offline']:,}")
-        print(f"    Offline percent:   {all_stats['offline_pct']:.2f}%")
-        print(f"    Online percent:    {all_stats['online_pct']:.2f}%")
+        print(f"    Total rows:           {all_stats['total']:,}")
+        print(f"    Unique users:         {month_logs['user'].nunique()}")
+        print(f"    Offline:              {all_stats['offline']:,}")
+        print(f"    Offline percent:      {all_stats['offline_pct']:.2f}%")
+        print(f"    Online percent:       {all_stats['online_pct']:.2f}%")
+        print(f"    Normalized offline:   {all_stats['normalized_offline_pct']:.2f}%  (per-user avg)")
+        print(f"    Normalized online:    {all_stats['normalized_online_pct']:.2f}%  (per-user avg)")
         print(f"  RUSH HOURS ({rush_start:02d}:00-{rush_end:02d}:00):")
-        print(f"    Total rows:        {rush_stats['total']:,}")
-        print(f"    Unique users:      {rush_logs['user'].nunique()}")
-        print(f"    Offline:           {rush_stats['offline']:,}")
-        print(f"    Offline percent:   {rush_stats['offline_pct']:.2f}%")
-        print(f"    Online percent:    {rush_stats['online_pct']:.2f}%")
+        print(f"    Total rows:           {rush_stats['total']:,}")
+        print(f"    Unique users:         {rush_logs['user'].nunique()}")
+        print(f"    Offline:              {rush_stats['offline']:,}")
+        print(f"    Offline percent:      {rush_stats['offline_pct']:.2f}%")
+        print(f"    Online percent:       {rush_stats['online_pct']:.2f}%")
+        print(f"    Normalized offline:   {rush_stats['normalized_offline_pct']:.2f}%  (per-user avg)")
+        print(f"    Normalized online:    {rush_stats['normalized_online_pct']:.2f}%  (per-user avg)")
     
     # Also show per-user breakdown per month
     print("\n" + "=" * 70)
