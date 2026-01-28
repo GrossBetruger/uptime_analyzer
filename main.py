@@ -437,6 +437,120 @@ def user_counts(
     print(f"Total users: {len(counts)}")
 
 
+def calculate_stats(df: pd.DataFrame) -> dict:
+    """Calculate offline/online statistics for a dataframe."""
+    total = len(df)
+    if total == 0:
+        return {"total": 0, "offline": 0, "offline_pct": 0.0, "online_pct": 0.0}
+    offline = (df["status"] == "offline").sum()
+    offline_pct = (offline / total) * 100
+    online_pct = 100 - offline_pct
+    return {"total": total, "offline": offline, "offline_pct": offline_pct, "online_pct": online_pct}
+
+
+@app.command()
+def monthly_stats(
+    logs_url: str = typer.Option(
+        "http://34.55.225.231:3000/logs",
+        "--logs-url",
+        "-u",
+        help="URL or path to the logs file"
+    ),
+    exclude_test_users: bool = typer.Option(
+        True,
+        "--exclude-test-users/--include-test-users",
+        "-e/-i",
+        help="Exclude test users (OrenK, Drier)"
+    ),
+    rush_start: int = typer.Option(
+        19,
+        "--rush-start",
+        help="Rush hour start time (24h format, default: 20)"
+    ),
+    rush_end: int = typer.Option(
+        23,
+        "--rush-end",
+        help="Rush hour end time (24h format, default: 23)"
+    )
+):
+    """
+    Show monthly statistics with user counts and row counts.
+    
+    For each month, displays: number of rows, unique users, offline count,
+    and offline ratio. Also shows rush hours (20:00-23:00) statistics.
+    Similar to offline_ratio.sh but broken down by month.
+    """
+    logs = read_logs(logs_url)
+    
+    # Exclude test users if requested
+    test_users = ["OrenK", "Drier", "2025-11-18T17:28:23+02:00"]
+    if exclude_test_users:
+        logs = logs[~logs["user"].isin(test_users)]
+    
+    # Extract hour and month directly from ISO string (e.g., "2025-11-18T17:28:23+02:00")
+    # The hour in the string is already in local time, so we can extract it directly
+    logs["local_hour"] = logs["readable_timestamp"].str.extract(r"T(\d{2}):")[0].astype(int)
+    logs["month"] = logs["readable_timestamp"].str[:7]  # "2025-11" format
+    
+    # Parse timestamp to UTC for date range display
+    logs["parsed_timestamp"] = pd.to_datetime(logs["readable_timestamp"], errors="coerce", utc=True)
+    
+    # Filter for rush hours (20:00 to 23:00 means hours 20, 21, 22)
+    logs["is_rush_hour"] = (logs["local_hour"] >= rush_start) & (logs["local_hour"] < rush_end)
+    
+    print("\n" + "=" * 70)
+    print(f"Monthly Statistics (Rush Hours: {rush_start:02d}:00-{rush_end:02d}:00 local time)")
+    print("=" * 70)
+    
+    for month in sorted(logs["month"].unique()):
+        month_logs = logs[logs["month"] == month]
+        rush_logs = month_logs[month_logs["is_rush_hour"]]
+        
+        all_stats = calculate_stats(month_logs)
+        rush_stats = calculate_stats(rush_logs)
+        
+        print(f"\n{month}:")
+        print(f"  ALL DAY:")
+        print(f"    Total rows:        {all_stats['total']:,}")
+        print(f"    Unique users:      {month_logs['user'].nunique()}")
+        print(f"    Offline:           {all_stats['offline']:,}")
+        print(f"    Offline percent:   {all_stats['offline_pct']:.2f}%")
+        print(f"    Online percent:    {all_stats['online_pct']:.2f}%")
+        print(f"  RUSH HOURS ({rush_start:02d}:00-{rush_end:02d}:00):")
+        print(f"    Total rows:        {rush_stats['total']:,}")
+        print(f"    Unique users:      {rush_logs['user'].nunique()}")
+        print(f"    Offline:           {rush_stats['offline']:,}")
+        print(f"    Offline percent:   {rush_stats['offline_pct']:.2f}%")
+        print(f"    Online percent:    {rush_stats['online_pct']:.2f}%")
+    
+    # Also show per-user breakdown per month
+    print("\n" + "=" * 70)
+    print("Per-User Row Counts by Month (All Day)")
+    print("=" * 70)
+    
+    user_monthly = logs.groupby(["month", "user"]).size().unstack(fill_value=0)
+    print(f"\n{user_monthly.to_string()}")
+    
+    print("\n" + "=" * 70)
+    print("Per-User Row Counts by Month (Rush Hours Only)")
+    print("=" * 70)
+    
+    rush_only = logs[logs["is_rush_hour"]]
+    if len(rush_only) > 0:
+        user_monthly_rush = rush_only.groupby(["month", "user"]).size().unstack(fill_value=0)
+        print(f"\n{user_monthly_rush.to_string()}")
+    else:
+        print("\nNo rush hour data available.")
+    
+    print("\n" + "=" * 70)
+    print("Summary")
+    print("=" * 70)
+    print(f"Total rows:        {len(logs):,}")
+    print(f"Rush hour rows:    {len(rush_only):,}")
+    print(f"Total users:       {logs['user'].nunique()}")
+    print(f"Date range:        {logs['parsed_timestamp'].min()} to {logs['parsed_timestamp'].max()}")
+
+
 if __name__ == "__main__":
     app()
   
