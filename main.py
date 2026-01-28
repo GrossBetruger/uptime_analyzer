@@ -414,6 +414,29 @@ def plots(
         fig.show()
 
 
+@app.command()
+def user_counts(
+    logs_url: str = typer.Option(
+        "http://34.55.225.231:3000/logs",
+        "--logs-url",
+        "-u",
+        help="URL or path to the logs file"
+    )
+):
+    """
+    Count rows per user and display sorted by count.
+    
+    This command reads logs and shows how many log entries each user has,
+    sorted from highest to lowest count.
+    """
+    logs = read_logs(logs_url)
+    counts = logs["user"].value_counts().sort_values(ascending=False)
+    print("\nUser row counts (sorted by count):\n")
+    print(counts.to_string())
+    print(f"\nTotal rows: {len(logs)}")
+    print(f"Total users: {len(counts)}")
+
+
 if __name__ == "__main__":
     app()
   
