@@ -22,6 +22,23 @@ def decode_url(url: str) -> str:
         url = b64decode(url).decode("utf-8")
     return url
 
+def read_logs_json(url: str) -> pd.DataFrame:
+    """
+    Read logs from a JSON API endpoint and return a pandas DataFrame.
+    Expected format: [{"unix_timestamp": ..., "iso_timestamp": ..., "user_name": ..., "public_ip": ..., "isn_info": ..., "status": ...}, ...]
+    """
+    response = requests.get(url)
+    data = response.json()
+    df = pd.DataFrame(data)
+    # Rename columns to match expected format
+    df = df.rename(columns={
+        "user_name": "user",
+        "iso_timestamp": "readable_timestamp",
+        "isn_info": "isp"
+    })
+    return df
+
+
 def read_logs(url: str) -> pd.DataFrame:
     """
     Read logs from a URL and return a pandas DataFrame.
@@ -469,11 +486,23 @@ def calculate_stats(df: pd.DataFrame) -> dict:
 
 @app.command()
 def monthly_stats(
-    logs_url: str = typer.Option(
-        "http://34.55.225.231:3000/logs",
-        "--logs-url",
+    csv: Optional[str] = typer.Option(
+        None,
+        "--csv",
+        "-c",
+        help="Path to a local CSV file to use instead of the remote API"
+    ),
+    days: Optional[int] = typer.Option(
+        None,
+        "--days",
+        "-d",
+        help="Number of days to fetch logs for (default: all data)"
+    ),
+    api_url: str = typer.Option(
+        "http://34.55.225.231:3000/db-logs",
+        "--api-url",
         "-u",
-        help="URL or path to the logs file"
+        help="Base URL for the db-logs API"
     ),
     exclude_test_users: bool = typer.Option(
         True,
@@ -499,20 +528,26 @@ def monthly_stats(
     and offline ratio. Also shows rush hours (20:00-23:00) statistics.
     Similar to offline_ratio.sh but broken down by month.
     """
-    logs = read_logs(logs_url)
+    if csv:
+        logs = pd.read_csv(csv)
+        logs = logs.rename(columns={
+            "user_name": "user",
+            "iso_timestamp": "readable_timestamp",
+            "isn_info": "isp"
+        })
+    else:
+        logs_url = f"{api_url}?days={days}" if days is not None else api_url
+        logs = read_logs_json(logs_url)
     
     # Exclude test users if requested
     test_users = ["OrenK", "Drier", "2025-11-18T17:28:23+02:00"]
     if exclude_test_users:
         logs = logs[~logs["user"].isin(test_users)]
     
-    # Extract hour and month directly from ISO string (e.g., "2025-11-18T17:28:23+02:00")
-    # The hour in the string is already in local time, so we can extract it directly
-    logs["local_hour"] = logs["readable_timestamp"].str.extract(r"T(\d{2}):")[0].astype(int)
-    logs["month"] = logs["readable_timestamp"].str[:7]  # "2025-11" format
-    
-    # Parse timestamp to UTC for date range display
+    # Parse timestamps properly
     logs["parsed_timestamp"] = pd.to_datetime(logs["readable_timestamp"], errors="coerce", utc=True)
+    logs["local_hour"] = logs["parsed_timestamp"].dt.hour
+    logs["month"] = logs["parsed_timestamp"].dt.to_period("M").astype(str)
     
     # Filter for rush hours (20:00 to 23:00 means hours 20, 21, 22)
     logs["is_rush_hour"] = (logs["local_hour"] >= rush_start) & (logs["local_hour"] < rush_end)
