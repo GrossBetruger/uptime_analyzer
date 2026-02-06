@@ -2,6 +2,8 @@ import pandas as pd
 import requests
 import re
 import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 from base64 import b64decode
 import os
 import psycopg
@@ -519,6 +521,11 @@ def monthly_stats(
         23,
         "--rush-end",
         help="Rush hour end time (24h format, default: 23)"
+    ),
+    plot: bool = typer.Option(
+        True,
+        "--plot/--no-plot",
+        help="Show interactive plots (default: True)"
     )
 ):
     """
@@ -607,6 +614,101 @@ def monthly_stats(
     print(f"Rush hour rows:    {len(rush_only):,}")
     print(f"Total users:       {logs['user'].nunique()}")
     print(f"Date range:        {logs['parsed_timestamp'].min()} to {logs['parsed_timestamp'].max()}")
+
+    if not plot:
+        return
+
+    months_sorted = sorted(logs["month"].unique())
+
+    # --- Build per-month stats for plotting ---
+    monthly_records = []
+    for month in months_sorted:
+        month_logs = logs[logs["month"] == month]
+        rush_logs = month_logs[month_logs["is_rush_hour"]]
+        all_stats = calculate_stats(month_logs)
+        rush_stats = calculate_stats(rush_logs)
+        monthly_records.append({
+            "month": month,
+            "all_day_offline_pct": all_stats["offline_pct"],
+            "rush_offline_pct": rush_stats["offline_pct"],
+            "all_day_normalized_offline_pct": all_stats["normalized_offline_pct"],
+            "rush_normalized_offline_pct": rush_stats["normalized_offline_pct"],
+            "total_rows": all_stats["total"],
+            "rush_rows": rush_stats["total"],
+            "users": month_logs["user"].nunique(),
+        })
+    monthly_df = pd.DataFrame(monthly_records)
+
+    # --- Plot 1: Monthly offline % (all-day vs rush hours) ---
+    fig1 = go.Figure()
+    fig1.add_trace(go.Bar(
+        x=monthly_df["month"], y=monthly_df["all_day_offline_pct"],
+        name="All Day", marker_color="#636EFA"
+    ))
+    fig1.add_trace(go.Bar(
+        x=monthly_df["month"], y=monthly_df["rush_offline_pct"],
+        name=f"Rush Hours ({rush_start:02d}:00-{rush_end:02d}:00)", marker_color="#EF553B"
+    ))
+    fig1.update_layout(
+        title="Monthly Offline % (All Day vs Rush Hours)",
+        xaxis_title="Month", yaxis_title="Offline %",
+        barmode="group", yaxis_ticksuffix="%"
+    )
+    fig1.show()
+
+    # --- Plot 2: Normalized offline % (per-user avg) ---
+    fig2 = go.Figure()
+    fig2.add_trace(go.Bar(
+        x=monthly_df["month"], y=monthly_df["all_day_normalized_offline_pct"],
+        name="All Day (normalized)", marker_color="#636EFA"
+    ))
+    fig2.add_trace(go.Bar(
+        x=monthly_df["month"], y=monthly_df["rush_normalized_offline_pct"],
+        name=f"Rush Hours (normalized)", marker_color="#EF553B"
+    ))
+    fig2.update_layout(
+        title="Monthly Normalized Offline % (Per-User Average)",
+        xaxis_title="Month", yaxis_title="Offline %",
+        barmode="group", yaxis_ticksuffix="%"
+    )
+    fig2.show()
+
+    # --- Plot 3: Per-user offline % by month (grouped bar) ---
+    user_month_stats = logs.groupby(["month", "user"]).apply(
+        lambda g: pd.Series({
+            "offline_pct": (g["status"] == "offline").sum() / len(g) * 100
+        })
+    ).reset_index()
+
+    fig3 = px.bar(
+        user_month_stats, x="month", y="offline_pct", color="user",
+        barmode="group",
+        title="Per-User Offline % by Month",
+        labels={"month": "Month", "offline_pct": "Offline %", "user": "User"}
+    )
+    fig3.update_layout(yaxis_ticksuffix="%")
+    fig3.show()
+
+    # --- Plot 4: Per-user offline % heatmap ---
+    heatmap_data = user_month_stats.pivot(index="user", columns="month", values="offline_pct").fillna(0)
+    fig4 = px.imshow(
+        heatmap_data,
+        text_auto=".1f",
+        color_continuous_scale="RdYlGn_r",
+        title="Offline % Heatmap (User x Month)",
+        labels={"x": "Month", "y": "User", "color": "Offline %"},
+        aspect="auto"
+    )
+    fig4.show()
+
+    # --- Plot 5: Monthly sample count per user (stacked area) ---
+    user_monthly_counts = logs.groupby(["month", "user"]).size().reset_index(name="count")
+    fig5 = px.area(
+        user_monthly_counts, x="month", y="count", color="user",
+        title="Monthly Log Volume per User",
+        labels={"month": "Month", "count": "Row Count", "user": "User"}
+    )
+    fig5.show()
 
 
 if __name__ == "__main__":
