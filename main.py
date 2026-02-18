@@ -209,7 +209,7 @@ def temp_postgres_container(
 
 
 def query_uptime_logs_with_temp_container(
-    backup_url: str = "http://34.55.225.231:3000/backup",
+    backup_url: str = "http://34.68.19.97:3000/backup",
     query: str = "SELECT * FROM uptime_logs",
     **kwargs
 ) -> pd.DataFrame:
@@ -239,7 +239,7 @@ def query_uptime_logs_with_temp_container(
         )
 
 def query_uptime_logs_from_backup(
-    backup_url: str = "http://34.55.225.231:3000/backup",
+    backup_url: str = "http://34.68.19.97:3000/backup",
     db_host: str = "localhost",
     db_port: int = 5432,
     db_user: Optional[str] = None,
@@ -325,7 +325,7 @@ app = typer.Typer(help="Uptime Analyzer - Analyze uptime logs and generate backu
 @app.command()
 def backup(
     backup_url: str = typer.Option(
-        "http://34.55.225.231:3000/backup",
+        "http://34.68.19.97:3000/backup",
         "--backup-url",
         "-u",
         help="URL to fetch the PostgreSQL dump from"
@@ -380,8 +380,14 @@ def user_daily_stats(logs: pd.DataFrame, user: str) -> pd.DataFrame:
 
 @app.command()
 def plots(
+    csv: Optional[str] = typer.Option(
+        None,
+        "--csv",
+        "-c",
+        help="Path to a local CSV file to use instead of the remote API"
+    ),
     logs_url: str = typer.Option(
-        "http://34.55.225.231:3000/logs",
+        "http://34.68.19.97:3000/logs",
         "--logs-url",
         "-u",
         help="URL or path to the logs file"
@@ -393,7 +399,15 @@ def plots(
     This command reads logs from the specified URL or file and generates
     visualization plots showing uptime status, disconnects, and offline durations.
     """
-    logs = read_logs(logs_url)
+    if csv:
+        logs = pd.read_csv(csv)
+        logs = logs.rename(columns={
+            "user_name": "user",
+            "iso_timestamp": "readable_timestamp",
+            "isn_info": "isp"
+        })
+    else:
+        logs = read_logs(logs_url)
     logs = enrich_logs(logs)
     logs.sort_values(by="readable_timestamp", inplace=True)
     test_users = ["OrenK", "Drier", "2025-11-18T17:28:23+02:00"]
@@ -436,7 +450,7 @@ def plots(
 @app.command()
 def user_counts(
     logs_url: str = typer.Option(
-        "http://34.55.225.231:3000/logs",
+        "http://34.68.19.97:3000/logs",
         "--logs-url",
         "-u",
         help="URL or path to the logs file"
@@ -501,7 +515,7 @@ def monthly_stats(
         help="Number of days to fetch logs for (default: all data)"
     ),
     api_url: str = typer.Option(
-        "http://34.55.225.231:3000/db-logs",
+        "http://34.68.19.97:3000/db-logs",
         "--api-url",
         "-u",
         help="Base URL for the db-logs API"
@@ -510,7 +524,7 @@ def monthly_stats(
         True,
         "--exclude-test-users/--include-test-users",
         "-e/-i",
-        help="Exclude test users (OrenK, Drier)"
+        help="Exclude test users (OrenK, Drier, RoeeS)"
     ),
     rush_start: int = typer.Option(
         20,
@@ -547,7 +561,7 @@ def monthly_stats(
         logs = read_logs_json(logs_url)
     
     # Exclude test users if requested
-    test_users = ["OrenK", "Drier", "2025-11-18T17:28:23+02:00"]
+    test_users = ["OrenK", "Drier", "RoeeS", "2025-11-18T17:28:23+02:00"]
     if exclude_test_users:
         logs = logs[~logs["user"].isin(test_users)]
     
@@ -639,39 +653,23 @@ def monthly_stats(
         })
     monthly_df = pd.DataFrame(monthly_records)
 
-    # --- Plot 1: Monthly offline % (all-day vs rush hours) ---
+    # --- Plot 1: Normalized offline % (per-user avg, all-day vs rush hours) ---
     fig1 = go.Figure()
     fig1.add_trace(go.Bar(
-        x=monthly_df["month"], y=monthly_df["all_day_offline_pct"],
+        x=monthly_df["month"], y=monthly_df["all_day_normalized_offline_pct"],
         name="All Day", marker_color="#636EFA"
     ))
     fig1.add_trace(go.Bar(
-        x=monthly_df["month"], y=monthly_df["rush_offline_pct"],
+        x=monthly_df["month"], y=monthly_df["rush_normalized_offline_pct"],
         name=f"Rush Hours ({rush_start:02d}:00-{rush_end:02d}:00)", marker_color="#EF553B"
     ))
     fig1.update_layout(
-        title="Monthly Offline % (All Day vs Rush Hours)",
+        title="Monthly Normalized Offline % (Per-User Average, All Day vs Rush Hours)",
         xaxis_title="Month", yaxis_title="Offline %",
-        barmode="group", yaxis_ticksuffix="%"
+        barmode="group", yaxis_ticksuffix="%",
+        xaxis_type="category"
     )
     fig1.show()
-
-    # --- Plot 2: Normalized offline % (per-user avg) ---
-    fig2 = go.Figure()
-    fig2.add_trace(go.Bar(
-        x=monthly_df["month"], y=monthly_df["all_day_normalized_offline_pct"],
-        name="All Day (normalized)", marker_color="#636EFA"
-    ))
-    fig2.add_trace(go.Bar(
-        x=monthly_df["month"], y=monthly_df["rush_normalized_offline_pct"],
-        name=f"Rush Hours (normalized)", marker_color="#EF553B"
-    ))
-    fig2.update_layout(
-        title="Monthly Normalized Offline % (Per-User Average)",
-        xaxis_title="Month", yaxis_title="Offline %",
-        barmode="group", yaxis_ticksuffix="%"
-    )
-    fig2.show()
 
     # --- Plot 3: Per-user offline % by month (grouped bar) ---
     user_month_stats = logs.groupby(["month", "user"]).apply(
@@ -686,7 +684,7 @@ def monthly_stats(
         title="Per-User Offline % by Month",
         labels={"month": "Month", "offline_pct": "Offline %", "user": "User"}
     )
-    fig3.update_layout(yaxis_ticksuffix="%")
+    fig3.update_layout(yaxis_ticksuffix="%", xaxis_type="category")
     fig3.show()
 
     # --- Plot 4: Per-user offline % heatmap ---
@@ -708,6 +706,7 @@ def monthly_stats(
         title="Monthly Log Volume per User",
         labels={"month": "Month", "count": "Row Count", "user": "User"}
     )
+    fig5.update_layout(xaxis_type="category")
     fig5.show()
 
 

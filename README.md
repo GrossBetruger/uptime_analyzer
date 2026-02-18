@@ -48,7 +48,7 @@ uv run python main.py backup
 ```
 
 Options:
-- `--backup-url` / `-u`: URL to fetch the PostgreSQL dump from (default: `http://34.55.225.231:3000/backup`)
+- `--backup-url` / `-u`: URL to fetch the PostgreSQL dump from (default: `http://34.68.19.97:3000/backup`)
 - `--query` / `-q`: SQL query to execute on uptime_logs table (default: `SELECT * FROM uptime_logs ORDER BY iso_timestamp`)
 - `--port` / `-p`: Host port to bind to (default: random available port)
 - `--output-dir` / `-o`: Directory to save CSV backup (default: `backups`)
@@ -67,7 +67,7 @@ uv run python main.py plots
 ```
 
 Options:
-- `--logs-url` / `-u`: URL or path to the logs file (default: `http://34.55.225.231:3000/logs`)
+- `--logs-url` / `-u`: URL or path to the logs file (default: `http://34.68.19.97:3000/logs`)
 
 Example:
 ```bash
